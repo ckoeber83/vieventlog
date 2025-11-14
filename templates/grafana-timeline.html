@@ -184,7 +184,8 @@
 
         #timelineChart {
             width: 100%;
-            height: 600px;
+            min-height: 400px;
+            height: auto;
         }
 
         .stats-panel {
@@ -567,7 +568,7 @@
             }
         }
 
-        // Process events into timeline data
+        // Process events into timeline data (with valve position logic from original)
         function processEventsForTimeline() {
             console.log('Processing events for timeline...');
             console.log('All events:', allEvents.length);
@@ -591,11 +592,12 @@
 
                 const timeMatch = !currentTimeRange.start ||
                     (eventTime >= currentTimeRange.start && eventTime <= currentTimeRange.end);
-                const typeMatch = !event.errorCode || activeFilters.eventTypes.has(event.errorCode);
+
+                // Don't filter by type here for valve codes - they're needed for state machine
                 const deviceKey = `${event.modelId}_${event.deviceId}`;
                 const deviceMatch = activeFilters.devices.has(deviceKey);
 
-                return timeMatch && typeMatch && deviceMatch;
+                return timeMatch && deviceMatch;
             });
 
             console.log('Filtered events:', filteredEvents.length);
@@ -607,7 +609,8 @@
                 if (!lanes[laneKey]) {
                     lanes[laneKey] = {
                         name: `${event.modelId} (${event.deviceId})`,
-                        events: []
+                        events: [],
+                        hasValveSpans: false
                     };
                 }
                 lanes[laneKey].events.push(event);
@@ -615,13 +618,34 @@
 
             console.log('Lanes:', Object.keys(lanes).length);
 
-            // Convert to timeline format (spans)
-            const timelineData = [];
-            const categories = [];
-            let categoryIndex = 0;
+            // Helper functions
+            const isValveCode = (c) => {
+                return c && (
+                    (c >= 'S.112' && c <= 'S.118') ||
+                    (c >= 'S.134' && c <= 'S.136')
+                );
+            };
 
-            Object.entries(lanes).forEach(([laneKey, lane]) => {
-                categories.push(lane.name);
+            const valvePositionMap = {
+                'S.112': 'init',
+                'S.113': 'switching-ww',
+                'S.114': 'switching-hk1',
+                'S.115': 'warmwater',
+                'S.116': 'heating-hk1',
+                'S.117': 'heating-hk2',
+                'S.118': 'buffer',
+                'S.134': 'idle',
+                'S.135': 'defrost',
+                'S.136': 'room'
+            };
+
+            // Process each lane to create state spans with valve position awareness
+            Object.values(lanes).forEach(lane => {
+                lane.spans = [];
+                lane.valveSpans = [];
+                const activeStates = {};
+                const activeValveStates = {};
+                let currentValvePosition = null;
 
                 // Sort events by time
                 const sortedEvents = lane.events.sort((a, b) => {
@@ -630,52 +654,219 @@
                     return aTime - bTime;
                 });
 
-                // Create spans from active/inactive pairs
-                const activeStates = {};
                 sortedEvents.forEach(event => {
                     const code = event.errorCode;
                     if (!code) return;
 
-                    const eventTime = new Date(event.eventTimestamp || event.createdAt);
+                    const eventTime = event.eventTimestamp || event.createdAt;
 
-                    // Validate date again
-                    if (isNaN(eventTime.getTime())) {
-                        console.warn('Invalid date in event:', event);
+                    // Handle valve position codes separately
+                    if (isValveCode(code)) {
+                        lane.hasValveSpans = true;
+
+                        if (event.active === true) {
+                            activeValveStates[code] = {
+                                startTime: eventTime,
+                                startEvent: event
+                            };
+                        } else if (event.active === false && activeValveStates[code]) {
+                            lane.valveSpans.push({
+                                code: code,
+                                startTime: activeValveStates[code].startTime,
+                                endTime: eventTime,
+                                startEvent: activeValveStates[code].startEvent,
+                                endEvent: event
+                            });
+                            delete activeValveStates[code];
+                        }
+                    }
+
+                    // Handle valve position transitions for S.125-WARMWATER overlay
+                    if (valvePositionMap[code]) {
+                        if (event.active === true) {
+                            const newValvePosition = valvePositionMap[code];
+
+                            // S.125 + S.115 = S.125-WARMWATER overlay
+                            if (code === 'S.115' && activeStates['S.125']) {
+                                activeStates['S.125-WARMWATER'] = {
+                                    startTime: eventTime,
+                                    startEvent: event,
+                                    originalCode: 'S.125',
+                                    valvePosition: 'warmwater',
+                                    parentS125: activeStates['S.125']
+                                };
+                            }
+
+                            // End S.125-WARMWATER when valve switches away
+                            if (activeStates['S.125-WARMWATER'] &&
+                                (code === 'S.116' || code === 'S.117' || code === 'S.118' ||
+                                 code === 'S.134' || code === 'S.135' || code === 'S.136')) {
+                                lane.spans.push({
+                                    code: 'S.125-WARMWATER',
+                                    originalCode: 'S.125',
+                                    startTime: activeStates['S.125-WARMWATER'].startTime,
+                                    endTime: eventTime,
+                                    startEvent: activeStates['S.125-WARMWATER'].startEvent,
+                                    endEvent: event,
+                                    valvePosition: 'warmwater'
+                                });
+                                delete activeStates['S.125-WARMWATER'];
+                            }
+
+                            currentValvePosition = newValvePosition;
+                        } else if (event.active === false) {
+                            // End S.125-WARMWATER when S.115 ends
+                            if (code === 'S.115' && activeStates['S.125-WARMWATER']) {
+                                lane.spans.push({
+                                    code: 'S.125-WARMWATER',
+                                    originalCode: 'S.125',
+                                    startTime: activeStates['S.125-WARMWATER'].startTime,
+                                    endTime: eventTime,
+                                    startEvent: activeStates['S.125-WARMWATER'].startEvent,
+                                    endEvent: event,
+                                    valvePosition: 'warmwater'
+                                });
+                                delete activeStates['S.125-WARMWATER'];
+                                currentValvePosition = null;
+                            }
+                        }
+                    }
+
+                    // Process main state events (non-valve codes)
+                    if (!isValveCode(code)) {
+                        if (event.active === true) {
+                            activeStates[code] = {
+                                startTime: eventTime,
+                                startEvent: event,
+                                originalCode: code,
+                                valvePosition: currentValvePosition
+                            };
+                        } else if (event.active === false && activeStates[code]) {
+                            lane.spans.push({
+                                code: code,
+                                originalCode: code,
+                                startTime: activeStates[code].startTime,
+                                endTime: eventTime,
+                                startEvent: activeStates[code].startEvent,
+                                endEvent: event,
+                                valvePosition: activeStates[code].valvePosition
+                            });
+                            delete activeStates[code];
+                        }
+                    }
+                });
+
+                // Add ongoing states
+                Object.entries(activeStates).forEach(([code, state]) => {
+                    lane.spans.push({
+                        code: code,
+                        originalCode: state.originalCode,
+                        startTime: state.startTime,
+                        endTime: new Date().toISOString(),
+                        startEvent: state.startEvent,
+                        endEvent: null,
+                        ongoing: true,
+                        valvePosition: state.valvePosition
+                    });
+                });
+
+                // Add ongoing valve states
+                Object.entries(activeValveStates).forEach(([code, state]) => {
+                    lane.valveSpans.push({
+                        code: code,
+                        startTime: state.startTime,
+                        endTime: new Date().toISOString(),
+                        startEvent: state.startEvent,
+                        endEvent: null,
+                        ongoing: true
+                    });
+                });
+            });
+
+            // Convert to ECharts format with separate rows for main + valve
+            const timelineData = [];
+            const categories = [];
+            let categoryIndex = 0;
+
+            Object.entries(lanes).forEach(([laneKey, lane]) => {
+                // Add main lane
+                categories.push(lane.name);
+                const mainCategoryIndex = categoryIndex;
+                categoryIndex++;
+
+                // Add valve lane if needed
+                let valveCategoryIndex = null;
+                if (lane.hasValveSpans) {
+                    categories.push(`${lane.name} (Ventil)`);
+                    valveCategoryIndex = categoryIndex;
+                    categoryIndex++;
+                }
+
+                // Add main spans (filter by active event type filters)
+                lane.spans.forEach(span => {
+                    // Apply event type filter here
+                    if (!activeFilters.eventTypes.has(span.code)) {
                         return;
                     }
 
-                    if (event.active === true) {
-                        activeStates[code] = {
-                            startTime: eventTime,
-                            startEvent: event
-                        };
-                    } else if (event.active === false && activeStates[code]) {
-                        const span = activeStates[code];
-                        const duration = (eventTime - span.startTime) / 1000 / 60; // minutes
+                    const startTime = new Date(span.startTime);
+                    const endTime = new Date(span.endTime);
+                    const duration = (endTime - startTime) / 1000 / 60;
+
+                    timelineData.push({
+                        name: eventTypes[span.code]?.label || span.code,
+                        value: [
+                            mainCategoryIndex,
+                            startTime.getTime(),
+                            endTime.getTime(),
+                            duration
+                        ],
+                        itemStyle: {
+                            normal: {
+                                color: eventTypes[span.code]?.color || '#64748b',
+                                // Make S.125-WARMWATER overlay slightly transparent
+                                opacity: span.code === 'S.125-WARMWATER' ? 0.85 : 1
+                            }
+                        },
+                        code: span.code,
+                        description: eventTypes[span.code]?.description || span.code,
+                        icon: eventTypes[span.code]?.icon || '•',
+                        ongoing: span.ongoing
+                    });
+                });
+
+                // Add valve spans if lane has them
+                if (valveCategoryIndex !== null) {
+                    lane.valveSpans.forEach(span => {
+                        // Apply event type filter here
+                        if (!activeFilters.eventTypes.has(span.code)) {
+                            return;
+                        }
+
+                        const startTime = new Date(span.startTime);
+                        const endTime = new Date(span.endTime);
+                        const duration = (endTime - startTime) / 1000 / 60;
 
                         timelineData.push({
-                            name: eventTypes[code]?.label || code,
+                            name: eventTypes[span.code]?.label || span.code,
                             value: [
-                                categoryIndex,
-                                span.startTime.getTime(),
-                                eventTime.getTime(),
+                                valveCategoryIndex,
+                                startTime.getTime(),
+                                endTime.getTime(),
                                 duration
                             ],
                             itemStyle: {
                                 normal: {
-                                    color: eventTypes[code]?.color || '#64748b'
+                                    color: eventTypes[span.code]?.color || '#64748b'
                                 }
                             },
-                            code: code,
-                            description: eventTypes[code]?.description || code,
-                            icon: eventTypes[code]?.icon || '•'
+                            code: span.code,
+                            description: eventTypes[span.code]?.description || span.code,
+                            icon: eventTypes[span.code]?.icon || '•',
+                            ongoing: span.ongoing
                         });
-
-                        delete activeStates[code];
-                    }
-                });
-
-                categoryIndex++;
+                    });
+                }
             });
 
             console.log('Timeline data items:', timelineData.length);
@@ -703,6 +894,12 @@
             }
 
             console.log('Rendering', data.length, 'items in', categories.length, 'categories');
+
+            // Calculate dynamic height based on categories (50px per row)
+            const rowHeight = 50;
+            const chartHeight = Math.max(400, categories.length * rowHeight + 150);
+            document.getElementById('timelineChart').style.height = chartHeight + 'px';
+            chart.resize();
 
             const option = {
                 backgroundColor: 'transparent',
@@ -760,30 +957,101 @@
                         fontWeight: 'bold'
                     }
                 },
+                brush: {
+                    toolbox: ['rect', 'clear'],
+                    xAxisIndex: 0,
+                    brushStyle: {
+                        borderWidth: 1,
+                        color: 'rgba(102, 126, 234, 0.2)',
+                        borderColor: 'rgba(102, 126, 234, 0.8)'
+                    },
+                    transformable: true,
+                    brushMode: 'single',
+                    outOfBrush: {
+                        colorAlpha: 0.3
+                    }
+                },
+                toolbox: {
+                    feature: {
+                        dataZoom: {
+                            yAxisIndex: 'none',
+                            title: {
+                                zoom: 'Bereich zoomen',
+                                back: 'Zoom zurück'
+                            }
+                        },
+                        brush: {
+                            type: ['rect', 'clear'],
+                            title: {
+                                rect: 'Bereich auswählen',
+                                clear: 'Auswahl löschen'
+                            }
+                        },
+                        restore: {
+                            title: 'Zurücksetzen'
+                        },
+                        saveAsImage: {
+                            title: 'Als Bild speichern',
+                            name: 'vieventlog-timeline'
+                        }
+                    },
+                    iconStyle: {
+                        borderColor: '#e0e0e0'
+                    },
+                    emphasis: {
+                        iconStyle: {
+                            borderColor: '#667eea'
+                        }
+                    }
+                },
                 dataZoom: [
                     {
                         type: 'slider',
                         filterMode: 'weakFilter',
                         showDataShadow: false,
-                        top: 50,
-                        height: 20,
-                        borderColor: 'transparent',
+                        show: true,
+                        xAxisIndex: [0],
+                        bottom: 10,
+                        start: 0,
+                        end: 100,
+                        height: 30,
+                        borderColor: 'rgba(255,255,255,0.2)',
                         backgroundColor: 'rgba(0,0,0,0.3)',
+                        fillerColor: 'rgba(102, 126, 234, 0.2)',
                         handleIcon: 'path://M10.7,11.9H9.3c-4.9,0.3-8.8,4.4-8.8,9.4c0,5,3.9,9.1,8.8,9.4h1.3c4.9-0.3,8.8-4.4,8.8-9.4C19.5,16.3,15.6,12.2,10.7,11.9z',
                         handleSize: '100%',
                         handleStyle: {
-                            color: '#667eea'
+                            color: '#667eea',
+                            borderColor: '#667eea'
                         },
+                        moveHandleSize: 5,
+                        showDetail: true,
                         textStyle: {
                             color: '#e0e0e0'
                         },
+                        dataBackground: {
+                            lineStyle: {
+                                color: 'rgba(102, 126, 234, 0.3)'
+                            },
+                            areaStyle: {
+                                color: 'rgba(102, 126, 234, 0.1)'
+                            }
+                        },
                         labelFormatter: function(value) {
-                            return DateTime.fromMillis(value).toFormat('dd.MM HH:mm');
+                            try {
+                                return DateTime.fromMillis(value).toFormat('dd.MM HH:mm');
+                            } catch (e) {
+                                return '';
+                            }
                         }
                     },
                     {
                         type: 'inside',
-                        filterMode: 'weakFilter'
+                        filterMode: 'weakFilter',
+                        xAxisIndex: [0],
+                        zoomOnMouseWheel: true,
+                        moveOnMouseMove: true,
+                        moveOnMouseWheel: false
                     }
                 ],
                 grid: {
