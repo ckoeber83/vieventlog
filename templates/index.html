@@ -2766,23 +2766,26 @@ ${formatEventBody(event.body)}
             let categoryIndex = 0;
 
             Object.entries(lanesByInstallation).forEach(([instId, lanesInInst]) => {
-                // Add installation header
+                // Add installation header (Adresse + Ort)
                 const installation = installations[instId];
-                const instHeader = installation
-                    ? `📍 ${installation.description || installation.location || instId}`
-                    : `📍 Installation ${instId}`;
+                let instHeader = '📍 Installation ' + instId;
+                if (installation) {
+                    if (installation.description && installation.location) {
+                        instHeader = `📍 ${installation.description} - ${installation.location}`;
+                    } else if (installation.description) {
+                        instHeader = `📍 ${installation.description}`;
+                    } else if (installation.location) {
+                        instHeader = `📍 ${installation.location}`;
+                    }
+                }
 
                 categories.push(instHeader);
                 categoryIndex++; // Skip the header row (no data on this row)
 
                 // Add each device in this installation
                 lanesInInst.forEach(({ laneKey, lane }) => {
-                    // Device name with location
-                    const deviceName = installation && installation.location
-                        ? `${lane.name} • ${installation.location}`
-                        : lane.name;
-
-                    categories.push(deviceName);
+                    // Device name only (location is already in the installation header)
+                    categories.push(lane.name);
                     const mainCategoryIndex = categoryIndex;
                     categoryIndex++;
 
