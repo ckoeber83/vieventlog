@@ -305,12 +305,12 @@
                     <button class="btn" onclick="resetZoom()">Zoom zurücksetzen</button>
                 </div>
                 <div class="quick-range-buttons" style="margin-top: 12px;">
-                    <button class="btn" onclick="setQuickRange(1)">Letzte 1h</button>
-                    <button class="btn" onclick="setQuickRange(6)">Letzte 6h</button>
-                    <button class="btn" onclick="setQuickRange(12)">Letzte 12h</button>
-                    <button class="btn active" onclick="setQuickRange(24)">Letzte 24h</button>
-                    <button class="btn" onclick="setQuickRange(72)">Letzte 3 Tage</button>
-                    <button class="btn" onclick="setQuickRange(168)">Letzte 7 Tage</button>
+                    <button class="btn" onclick="setQuickRange(1, this)">Letzte 1h</button>
+                    <button class="btn" onclick="setQuickRange(6, this)">Letzte 6h</button>
+                    <button class="btn" onclick="setQuickRange(12, this)">Letzte 12h</button>
+                    <button class="btn active" onclick="setQuickRange(24, this)">Letzte 24h</button>
+                    <button class="btn" onclick="setQuickRange(72, this)">Letzte 3 Tage</button>
+                    <button class="btn" onclick="setQuickRange(168, this)">Letzte 7 Tage</button>
                 </div>
             </div>
 
@@ -333,11 +333,6 @@
 
         <!-- Chart Container -->
         <div class="chart-container">
-            <div class="toolbar">
-                <div class="zoom-info" id="zoomInfo">
-                    🔍 Zoom: Mausrad oder Pinch | Pan: Ziehen | Doppelklick: Reset
-                </div>
-            </div>
             <div id="timelineChart"></div>
         </div>
 
@@ -415,17 +410,24 @@
 
         // Initialize on page load
         document.addEventListener('DOMContentLoaded', async () => {
+            console.log('Page loaded, initializing...');
             await loadEvents();
-            initializeFilters();
+            // Note: initializeFilters is called from loadEvents after devices are extracted
             setQuickRange(24); // Default: Last 24 hours
         });
 
         // Load events from API
         async function loadEvents() {
             try {
+                console.log('Loading events from API...');
                 const response = await fetch('/api/events?days=7');
                 const data = await response.json();
                 allEvents = data.events || [];
+
+                console.log(`Loaded ${allEvents.length} events`);
+                if (allEvents.length > 0) {
+                    console.log('First event:', allEvents[0]);
+                }
 
                 // Extract unique devices
                 const devices = new Set();
@@ -436,12 +438,16 @@
                 });
                 activeFilters.devices = devices;
 
+                console.log(`Found ${devices.size} devices:`, [...devices]);
+
+                // Initialize filters AFTER devices are loaded
+                initializeFilters();
+
                 updateStats();
-                renderChart();
             } catch (error) {
                 console.error('Error loading events:', error);
                 document.getElementById('timelineChart').innerHTML =
-                    '<div class="loading">Fehler beim Laden der Events</div>';
+                    '<div class="loading">Fehler beim Laden der Events: ' + error.message + '</div>';
             }
         }
 
@@ -501,7 +507,7 @@
         }
 
         // Set quick time range
-        function setQuickRange(hours) {
+        function setQuickRange(hours, buttonElement) {
             const end = DateTime.now();
             const start = end.minus({ hours });
             currentTimeRange = {
@@ -517,7 +523,19 @@
             document.querySelectorAll('.quick-range-buttons .btn').forEach(btn => {
                 btn.classList.remove('active');
             });
-            event.target.classList.add('active');
+
+            // Add active class to clicked button if provided
+            if (buttonElement) {
+                buttonElement.classList.add('active');
+            } else {
+                // Default: activate 24h button on initial load
+                const buttons = document.querySelectorAll('.quick-range-buttons .btn');
+                buttons.forEach((btn, index) => {
+                    if (btn.textContent.includes('24h')) {
+                        btn.classList.add('active');
+                    }
+                });
+            }
 
             renderChart();
         }
@@ -549,9 +567,26 @@
 
         // Process events into timeline data
         function processEventsForTimeline() {
+            console.log('Processing events for timeline...');
+            console.log('All events:', allEvents.length);
+            console.log('Time range:', currentTimeRange);
+
             // Filter events by time range, event types, and devices
             filteredEvents = allEvents.filter(event => {
+                // Validate event has required fields
+                if (!event.eventTimestamp && !event.createdAt) {
+                    console.warn('Event without timestamp:', event);
+                    return false;
+                }
+
                 const eventTime = new Date(event.eventTimestamp || event.createdAt);
+
+                // Validate date
+                if (isNaN(eventTime.getTime())) {
+                    console.warn('Invalid event time:', event.eventTimestamp || event.createdAt);
+                    return false;
+                }
+
                 const timeMatch = !currentTimeRange.start ||
                     (eventTime >= currentTimeRange.start && eventTime <= currentTimeRange.end);
                 const typeMatch = !event.errorCode || activeFilters.eventTypes.has(event.errorCode);
@@ -560,6 +595,8 @@
 
                 return timeMatch && typeMatch && deviceMatch;
             });
+
+            console.log('Filtered events:', filteredEvents.length);
 
             // Group events by device
             const lanes = {};
@@ -573,6 +610,8 @@
                 }
                 lanes[laneKey].events.push(event);
             });
+
+            console.log('Lanes:', Object.keys(lanes).length);
 
             // Convert to timeline format (spans)
             const timelineData = [];
@@ -596,6 +635,12 @@
                     if (!code) return;
 
                     const eventTime = new Date(event.eventTimestamp || event.createdAt);
+
+                    // Validate date again
+                    if (isNaN(eventTime.getTime())) {
+                        console.warn('Invalid date in event:', event);
+                        return;
+                    }
 
                     if (event.active === true) {
                         activeStates[code] = {
@@ -631,42 +676,77 @@
                 categoryIndex++;
             });
 
+            console.log('Timeline data items:', timelineData.length);
+            console.log('Categories:', categories);
+
             return { data: timelineData, categories };
         }
 
         // Render chart
         function renderChart() {
+            console.log('Rendering chart...');
             const { data, categories } = processEventsForTimeline();
 
             if (!chart) {
+                console.log('Initializing chart...');
                 chart = echarts.init(document.getElementById('timelineChart'), 'dark');
             }
+
+            // Show message if no data
+            if (!data || data.length === 0) {
+                console.warn('No data to display');
+                document.getElementById('timelineChart').innerHTML =
+                    '<div style="text-align: center; padding: 60px; color: #a0a0b0;">Keine Events im ausgewählten Zeitraum gefunden</div>';
+                return;
+            }
+
+            console.log('Rendering', data.length, 'items in', categories.length, 'categories');
 
             const option = {
                 backgroundColor: 'transparent',
                 tooltip: {
                     trigger: 'item',
                     formatter: function (params) {
-                        const { name, value, data } = params;
-                        const start = DateTime.fromMillis(value[1]).toFormat('dd.MM.yyyy HH:mm:ss');
-                        const end = DateTime.fromMillis(value[2]).toFormat('dd.MM.yyyy HH:mm:ss');
-                        const duration = formatDuration(value[3]);
+                        try {
+                            const { name, value, data } = params;
 
-                        return `
-                            <div style="padding: 8px;">
-                                <div style="font-weight: bold; margin-bottom: 4px;">
-                                    ${data.icon} ${name}
+                            // Validate values
+                            if (!value || !Array.isArray(value) || value.length < 4) {
+                                return `<div style="padding: 8px;">${name}</div>`;
+                            }
+
+                            const startTime = value[1];
+                            const endTime = value[2];
+                            const duration = value[3];
+
+                            // Validate timestamps
+                            if (!startTime || !endTime || isNaN(startTime) || isNaN(endTime)) {
+                                return `<div style="padding: 8px;">${name}</div>`;
+                            }
+
+                            const start = DateTime.fromMillis(startTime).toFormat('dd.MM.yyyy HH:mm:ss');
+                            const end = DateTime.fromMillis(endTime).toFormat('dd.MM.yyyy HH:mm:ss');
+                            const durationStr = formatDuration(duration);
+
+                            return `
+                                <div style="padding: 8px;">
+                                    <div style="font-weight: bold; margin-bottom: 4px;">
+                                        ${data?.icon || '•'} ${name}
+                                    </div>
+                                    <div style="font-size: 11px; color: #aaa; margin-bottom: 8px;">
+                                        ${data?.description || ''}
+                                    </div>
+                                    <div style="font-size: 12px;">
+                                        <strong>Start:</strong> ${start}<br>
+                                        <strong>Ende:</strong> ${end}<br>
+                                        <strong>Dauer:</strong> ${durationStr}
+                                    </div>
                                 </div>
-                                <div style="font-size: 11px; color: #aaa; margin-bottom: 8px;">
-                                    ${data.description}
-                                </div>
-                                <div style="font-size: 12px;">
-                                    <strong>Start:</strong> ${start}<br>
-                                    <strong>Ende:</strong> ${end}<br>
-                                    <strong>Dauer:</strong> ${duration}
-                                </div>
-                            </div>
-                        `;
+                            `;
+                        } catch (error) {
+                            console.error('Tooltip error:', error);
+                            return `<div style="padding: 8px;">${params.name || 'Event'}</div>`;
+                        }
                     }
                 },
                 title: {
