@@ -2498,8 +2498,34 @@ ${formatEventBody(event.body)}
                 yAxis: {
                     type: 'category',
                     data: categories,
-                    axisLabel: { color: '#e0e0e0', fontSize: 12 },
-                    axisLine: { lineStyle: { color: 'rgba(255,255,255,0.2)' } }
+                    axisLabel: {
+                        color: '#e0e0e0',
+                        fontSize: 12,
+                        formatter: function(value) {
+                            // Apply rich text styling for installation headers
+                            if (value && value.startsWith('📍')) {
+                                return `{header|${value}}`;
+                            }
+                            return value;
+                        },
+                        rich: {
+                            header: {
+                                color: '#667eea',
+                                fontWeight: 'bold',
+                                fontSize: 14,
+                                padding: [4, 0, 4, 0]
+                            }
+                        }
+                    },
+                    axisLine: { lineStyle: { color: 'rgba(255,255,255,0.2)' } },
+                    splitLine: {
+                        show: true,
+                        lineStyle: {
+                            color: 'rgba(102, 126, 234, 0.15)',
+                            width: 1,
+                            type: 'solid'
+                        }
+                    }
                 },
                 series: [{
                     type: 'custom',
@@ -2575,6 +2601,7 @@ ${formatEventBody(event.body)}
                 if (!lanes[laneKey]) {
                     lanes[laneKey] = {
                         name: `${event.modelId} (${event.deviceId})`,
+                        installationId: event.installationId || 'Unknown',
                         events: [],
                         hasValveSpans: false
                     };
@@ -2723,49 +2750,51 @@ ${formatEventBody(event.body)}
                 });
             });
 
-            // Convert to ECharts format
+            // Group lanes by installation
+            const lanesByInstallation = {};
+            Object.entries(lanes).forEach(([laneKey, lane]) => {
+                const instId = lane.installationId;
+                if (!lanesByInstallation[instId]) {
+                    lanesByInstallation[instId] = [];
+                }
+                lanesByInstallation[instId].push({ laneKey, lane });
+            });
+
+            // Convert to ECharts format with installation grouping
             const timelineData = [];
             const categories = [];
             let categoryIndex = 0;
 
-            Object.entries(lanes).forEach(([laneKey, lane]) => {
-                categories.push(lane.name);
-                const mainCategoryIndex = categoryIndex;
-                categoryIndex++;
+            Object.entries(lanesByInstallation).forEach(([instId, lanesInInst]) => {
+                // Add installation header
+                const installation = installations[instId];
+                const instHeader = installation
+                    ? `📍 ${installation.description || installation.location || instId}`
+                    : `📍 Installation ${instId}`;
 
-                let valveCategoryIndex = null;
-                if (lane.hasValveSpans) {
-                    categories.push(`${lane.name} (Ventil)`);
-                    valveCategoryIndex = categoryIndex;
+                categories.push(instHeader);
+                categoryIndex++; // Skip the header row (no data on this row)
+
+                // Add each device in this installation
+                lanesInInst.forEach(({ laneKey, lane }) => {
+                    // Device name with location
+                    const deviceName = installation && installation.location
+                        ? `${lane.name} • ${installation.location}`
+                        : lane.name;
+
+                    categories.push(deviceName);
+                    const mainCategoryIndex = categoryIndex;
                     categoryIndex++;
-                }
 
-                // Add main spans
-                lane.spans.forEach(span => {
-                    if (globalFilters.timelineTypes[span.code] === false) return;
-                    const startTime = new Date(span.startTime);
-                    const endTime = new Date(span.endTime);
-                    const duration = (endTime - startTime) / 1000 / 60;
+                    let valveCategoryIndex = null;
+                    if (lane.hasValveSpans) {
+                        categories.push(`  └─ Ventilposition`);
+                        valveCategoryIndex = categoryIndex;
+                        categoryIndex++;
+                    }
 
-                    timelineData.push({
-                        name: eventTypes[span.code]?.label || span.code,
-                        value: [mainCategoryIndex, startTime.getTime(), endTime.getTime(), duration],
-                        itemStyle: {
-                            normal: {
-                                color: eventTypes[span.code]?.color || '#64748b',
-                                opacity: span.code === 'S.125-WARMWATER' ? 0.85 : 1
-                            }
-                        },
-                        code: span.code,
-                        description: eventTypes[span.code]?.description || span.code,
-                        icon: eventTypes[span.code]?.icon || '•',
-                        ongoing: span.ongoing
-                    });
-                });
-
-                // Add valve spans
-                if (valveCategoryIndex !== null) {
-                    lane.valveSpans.forEach(span => {
+                    // Add main spans
+                    lane.spans.forEach(span => {
                         if (globalFilters.timelineTypes[span.code] === false) return;
                         const startTime = new Date(span.startTime);
                         const endTime = new Date(span.endTime);
@@ -2773,15 +2802,40 @@ ${formatEventBody(event.body)}
 
                         timelineData.push({
                             name: eventTypes[span.code]?.label || span.code,
-                            value: [valveCategoryIndex, startTime.getTime(), endTime.getTime(), duration],
-                            itemStyle: { normal: { color: eventTypes[span.code]?.color || '#64748b' } },
+                            value: [mainCategoryIndex, startTime.getTime(), endTime.getTime(), duration],
+                            itemStyle: {
+                                normal: {
+                                    color: eventTypes[span.code]?.color || '#64748b',
+                                    opacity: span.code === 'S.125-WARMWATER' ? 0.85 : 1
+                                }
+                            },
                             code: span.code,
                             description: eventTypes[span.code]?.description || span.code,
                             icon: eventTypes[span.code]?.icon || '•',
                             ongoing: span.ongoing
                         });
                     });
-                }
+
+                    // Add valve spans
+                    if (valveCategoryIndex !== null) {
+                        lane.valveSpans.forEach(span => {
+                            if (globalFilters.timelineTypes[span.code] === false) return;
+                            const startTime = new Date(span.startTime);
+                            const endTime = new Date(span.endTime);
+                            const duration = (endTime - startTime) / 1000 / 60;
+
+                            timelineData.push({
+                                name: eventTypes[span.code]?.label || span.code,
+                                value: [valveCategoryIndex, startTime.getTime(), endTime.getTime(), duration],
+                                itemStyle: { normal: { color: eventTypes[span.code]?.color || '#64748b' } },
+                                code: span.code,
+                                description: eventTypes[span.code]?.description || span.code,
+                                icon: eventTypes[span.code]?.icon || '•',
+                                ongoing: span.ongoing
+                            });
+                        });
+                    }
+                });
             });
 
             return { data: timelineData, categories };
