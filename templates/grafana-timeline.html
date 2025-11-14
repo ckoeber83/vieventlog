@@ -422,7 +422,9 @@
                 console.log('Loading events from API...');
                 const response = await fetch('/api/events?days=7');
                 const data = await response.json();
-                allEvents = data.events || [];
+
+                // API returns array directly, not wrapped in {events: [...]}
+                allEvents = Array.isArray(data) ? data : [];
 
                 console.log(`Loaded ${allEvents.length} events`);
                 if (allEvents.length > 0) {
