@@ -1,0 +1,835 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ViEventLog - Grafana-Style Timeline</title>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/luxon@3.4.4/build/global/luxon.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #0f0f1e 0%, #1a1a2e 50%, #16213e 100%);
+            color: #e0e0e0;
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 100%;
+            margin: 0 auto;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #1e1e2e 0%, #2a2a3e 100%);
+            border-radius: 16px;
+            padding: 24px;
+            margin-bottom: 20px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .header h1 {
+            font-size: 28px;
+            font-weight: 700;
+            margin-bottom: 8px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .header p {
+            color: #a0a0b0;
+            font-size: 14px;
+        }
+
+        .controls-panel {
+            background: linear-gradient(135deg, #1e1e2e 0%, #2a2a3e 100%);
+            border-radius: 16px;
+            padding: 24px;
+            margin-bottom: 20px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .control-group {
+            margin-bottom: 20px;
+        }
+
+        .control-group:last-child {
+            margin-bottom: 0;
+        }
+
+        .control-group h3 {
+            font-size: 14px;
+            font-weight: 600;
+            color: #a0a0b0;
+            margin-bottom: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .time-range-controls {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .time-input-group {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .time-input-group label {
+            font-size: 12px;
+            color: #a0a0b0;
+        }
+
+        .time-input-group input {
+            padding: 10px 14px;
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 8px;
+            color: #e0e0e0;
+            font-size: 13px;
+            font-family: 'Courier New', monospace;
+            transition: all 0.2s;
+        }
+
+        .time-input-group input:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .quick-range-buttons {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            padding: 10px 16px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.05);
+            color: #e0e0e0;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 500;
+            transition: all 0.2s;
+            white-space: nowrap;
+        }
+
+        .btn:hover {
+            background: rgba(255, 255, 255, 0.1);
+            border-color: rgba(255, 255, 255, 0.3);
+            transform: translateY(-1px);
+        }
+
+        .btn.active {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-color: transparent;
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+
+        .event-type-filters {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .filter-chip {
+            padding: 8px 14px;
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            border-radius: 20px;
+            background: rgba(255, 255, 255, 0.05);
+            color: #a0a0b0;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 500;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .filter-chip.active {
+            border-color: transparent;
+            color: white;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+        }
+
+        .filter-chip span.icon {
+            font-size: 14px;
+        }
+
+        .chart-container {
+            background: linear-gradient(135deg, #1e1e2e 0%, #2a2a3e 100%);
+            border-radius: 16px;
+            padding: 24px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            margin-bottom: 20px;
+        }
+
+        #timelineChart {
+            width: 100%;
+            height: 600px;
+        }
+
+        .stats-panel {
+            background: linear-gradient(135deg, #1e1e2e 0%, #2a2a3e 100%);
+            border-radius: 16px;
+            padding: 24px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+        }
+
+        .stat-card {
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 12px;
+            padding: 16px;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .stat-card h4 {
+            font-size: 12px;
+            color: #a0a0b0;
+            margin-bottom: 8px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .stat-card .value {
+            font-size: 28px;
+            font-weight: 700;
+            color: #e0e0e0;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 60px;
+            color: #a0a0b0;
+        }
+
+        .loading::after {
+            content: '⏳';
+            font-size: 32px;
+            display: block;
+            margin-top: 12px;
+            animation: spin 2s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .toolbar {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 16px;
+            flex-wrap: wrap;
+        }
+
+        .zoom-info {
+            padding: 8px 12px;
+            background: rgba(102, 126, 234, 0.1);
+            border: 1px solid rgba(102, 126, 234, 0.3);
+            border-radius: 8px;
+            color: #667eea;
+            font-size: 12px;
+            font-family: 'Courier New', monospace;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            body {
+                padding: 12px;
+            }
+
+            .header h1 {
+                font-size: 22px;
+            }
+
+            #timelineChart {
+                height: 400px;
+            }
+
+            .time-range-controls {
+                flex-direction: column;
+                align-items: stretch;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <h1>📊 ViEventLog - Grafana-Style Timeline</h1>
+            <p>Interaktive Event-Visualisierung mit Zoom, Pan und flexibler Zeitsteuerung</p>
+        </div>
+
+        <!-- Controls Panel -->
+        <div class="controls-panel">
+            <!-- Time Range Controls -->
+            <div class="control-group">
+                <h3>⏰ Zeitbereich</h3>
+                <div class="time-range-controls">
+                    <div class="time-input-group">
+                        <label>Von:</label>
+                        <input type="datetime-local" id="startTime" />
+                    </div>
+                    <div class="time-input-group">
+                        <label>Bis:</label>
+                        <input type="datetime-local" id="endTime" />
+                    </div>
+                    <button class="btn" onclick="applyTimeRange()">Anwenden</button>
+                    <button class="btn" onclick="resetZoom()">Zoom zurücksetzen</button>
+                </div>
+                <div class="quick-range-buttons" style="margin-top: 12px;">
+                    <button class="btn" onclick="setQuickRange(1)">Letzte 1h</button>
+                    <button class="btn" onclick="setQuickRange(6)">Letzte 6h</button>
+                    <button class="btn" onclick="setQuickRange(12)">Letzte 12h</button>
+                    <button class="btn active" onclick="setQuickRange(24)">Letzte 24h</button>
+                    <button class="btn" onclick="setQuickRange(72)">Letzte 3 Tage</button>
+                    <button class="btn" onclick="setQuickRange(168)">Letzte 7 Tage</button>
+                </div>
+            </div>
+
+            <!-- Event Type Filters -->
+            <div class="control-group">
+                <h3>🎯 Event-Typen Filter</h3>
+                <div class="event-type-filters" id="eventTypeFilters">
+                    <!-- Wird dynamisch gefüllt -->
+                </div>
+            </div>
+
+            <!-- Device Filter -->
+            <div class="control-group">
+                <h3>🔧 Geräte Filter</h3>
+                <div class="event-type-filters" id="deviceFilters">
+                    <!-- Wird dynamisch gefüllt -->
+                </div>
+            </div>
+        </div>
+
+        <!-- Chart Container -->
+        <div class="chart-container">
+            <div class="toolbar">
+                <div class="zoom-info" id="zoomInfo">
+                    🔍 Zoom: Mausrad oder Pinch | Pan: Ziehen | Doppelklick: Reset
+                </div>
+            </div>
+            <div id="timelineChart"></div>
+        </div>
+
+        <!-- Statistics Panel -->
+        <div class="stats-panel">
+            <h3 style="margin-bottom: 16px; color: #a0a0b0;">📈 Statistiken</h3>
+            <div class="stats-grid" id="statsGrid">
+                <div class="stat-card">
+                    <h4>Gesamt Events</h4>
+                    <div class="value" id="totalEvents">-</div>
+                </div>
+                <div class="stat-card">
+                    <h4>Angezeigte Events</h4>
+                    <div class="value" id="visibleEvents">-</div>
+                </div>
+                <div class="stat-card">
+                    <h4>Geräte</h4>
+                    <div class="value" id="deviceCount">-</div>
+                </div>
+                <div class="stat-card">
+                    <h4>Zeitspanne</h4>
+                    <div class="value" id="timeSpan">-</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Initialize Luxon DateTime
+        const DateTime = luxon.DateTime;
+
+        // Global state
+        let allEvents = [];
+        let filteredEvents = [];
+        let chart = null;
+        let currentTimeRange = { start: null, end: null };
+
+        // Event type definitions (from original code)
+        const eventTypes = {
+            // Wärmepumpen-Status
+            'S.125': { label: 'Heizen', description: 'Wärmepumpe im Heizbetrieb', color: '#ef4444', icon: '🔥' },
+            'S.125-WARMWATER': { label: 'WW-Bereitung', description: 'Warmwasserbereitung aktiv', color: '#8b5cf6', icon: '🚿' },
+            'S.126': { label: 'Kühlen', description: 'Wärmepumpe im Kühlbetrieb', color: '#06b6d4', icon: '❄️' },
+            'S.128': { label: 'Abtauen', description: 'Wärmepumpe im Abtaubetrieb', color: '#14b8a6', icon: '💧' },
+            'S.123': { label: 'Aus', description: 'Wärmepumpe ausgeschaltet', color: '#64748b', icon: '⏸' },
+            'S.124': { label: 'Vorlauf', description: 'Wärmepumpe Vorlaufphase', color: '#f59e0b', icon: '⏫' },
+            'S.129': { label: 'Nachlauf', description: 'Wärmepumpe Nachlaufphase', color: '#3b82f6', icon: '⏬' },
+
+            // Ventil-Positionen
+            'S.112': { label: 'V-Init', description: 'Ventil initialisiert', color: '#94a3b8', icon: '🔧' },
+            'S.113': { label: 'V→WW', description: 'Ventil schaltet zu Warmwasser', color: '#c084fc', icon: '→' },
+            'S.114': { label: 'V→HK1', description: 'Ventil schaltet zu Heizkreis 1', color: '#fb923c', icon: '→' },
+            'S.115': { label: 'V-WW', description: 'Ventil in Warmwasser-Position', color: '#a78bfa', icon: '🔀' },
+            'S.116': { label: 'V-HK1', description: 'Ventil in Heizkreis 1 Position', color: '#f97316', icon: '🔀' },
+            'S.117': { label: 'V-HK2', description: 'Ventil in Heizkreis 2 Position', color: '#f59e0b', icon: '🔀' },
+            'S.118': { label: 'V-Puffer', description: 'Ventil in Pufferspeicher-Position', color: '#10b981', icon: '🔄' },
+            'S.134': { label: 'V-Leerlauf', description: 'Ventil im Leerlauf', color: '#6b7280', icon: '⭕' },
+            'S.135': { label: 'V-Abtauen', description: 'Ventil in Abtau-Position', color: '#22d3ee', icon: '🔀' },
+            'S.136': { label: 'V-Raumheizung', description: 'Ventil in Raumheizungs-Position', color: '#84cc16', icon: '🏠' },
+
+            // Lüftung & Bypass
+            'S.168': { label: 'Bypass offen', description: 'Lüftungsbypass geöffnet', color: '#22c55e', icon: '🌬️' },
+            'S.169': { label: 'Bypass zu', description: 'Lüftungsbypass geschlossen', color: '#6b7280', icon: '🚫' },
+
+            // Taupunkt/Feuchteschutz
+            'I.121': { label: 'Feuchte HK1', description: 'Feuchteanbauschalter Heizkreis 1 aktiv', color: '#fbbf24', icon: '💦' },
+            'I.122': { label: 'Feuchte HK2', description: 'Feuchteanbauschalter Heizkreis 2 aktiv', color: '#fb923c', icon: '💦' }
+        };
+
+        // Active filters
+        let activeFilters = {
+            eventTypes: new Set(Object.keys(eventTypes)),
+            devices: new Set()
+        };
+
+        // Initialize on page load
+        document.addEventListener('DOMContentLoaded', async () => {
+            await loadEvents();
+            initializeFilters();
+            setQuickRange(24); // Default: Last 24 hours
+        });
+
+        // Load events from API
+        async function loadEvents() {
+            try {
+                const response = await fetch('/api/events?days=7');
+                const data = await response.json();
+                allEvents = data.events || [];
+
+                // Extract unique devices
+                const devices = new Set();
+                allEvents.forEach(event => {
+                    if (event.deviceId && event.modelId) {
+                        devices.add(`${event.modelId}_${event.deviceId}`);
+                    }
+                });
+                activeFilters.devices = devices;
+
+                updateStats();
+                renderChart();
+            } catch (error) {
+                console.error('Error loading events:', error);
+                document.getElementById('timelineChart').innerHTML =
+                    '<div class="loading">Fehler beim Laden der Events</div>';
+            }
+        }
+
+        // Initialize filter UI
+        function initializeFilters() {
+            // Event type filters
+            const eventTypeFiltersContainer = document.getElementById('eventTypeFilters');
+            eventTypeFiltersContainer.innerHTML = Object.entries(eventTypes).map(([code, info]) => {
+                const active = activeFilters.eventTypes.has(code);
+                return `
+                    <div class="filter-chip ${active ? 'active' : ''}"
+                         style="${active ? `background: ${info.color}; border-color: ${info.color};` : ''}"
+                         onclick="toggleEventTypeFilter('${code}')"
+                         title="${info.description}">
+                        <span class="icon">${info.icon}</span>
+                        <span>${info.label}</span>
+                    </div>
+                `;
+            }).join('');
+
+            // Device filters
+            const deviceFiltersContainer = document.getElementById('deviceFilters');
+            const devices = [...activeFilters.devices];
+            deviceFiltersContainer.innerHTML = devices.map(device => {
+                const [modelId, deviceId] = device.split('_');
+                return `
+                    <div class="filter-chip active"
+                         style="background: #667eea;"
+                         onclick="toggleDeviceFilter('${device}')">
+                        <span class="icon">🔧</span>
+                        <span>${modelId} (${deviceId})</span>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // Toggle event type filter
+        function toggleEventTypeFilter(code) {
+            if (activeFilters.eventTypes.has(code)) {
+                activeFilters.eventTypes.delete(code);
+            } else {
+                activeFilters.eventTypes.add(code);
+            }
+            initializeFilters();
+            renderChart();
+        }
+
+        // Toggle device filter
+        function toggleDeviceFilter(device) {
+            if (activeFilters.devices.has(device)) {
+                activeFilters.devices.delete(device);
+            } else {
+                activeFilters.devices.add(device);
+            }
+            initializeFilters();
+            renderChart();
+        }
+
+        // Set quick time range
+        function setQuickRange(hours) {
+            const end = DateTime.now();
+            const start = end.minus({ hours });
+            currentTimeRange = {
+                start: start.toJSDate(),
+                end: end.toJSDate()
+            };
+
+            // Update input fields
+            document.getElementById('startTime').value = start.toFormat("yyyy-MM-dd'T'HH:mm");
+            document.getElementById('endTime').value = end.toFormat("yyyy-MM-dd'T'HH:mm");
+
+            // Update button states
+            document.querySelectorAll('.quick-range-buttons .btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            event.target.classList.add('active');
+
+            renderChart();
+        }
+
+        // Apply custom time range
+        function applyTimeRange() {
+            const startValue = document.getElementById('startTime').value;
+            const endValue = document.getElementById('endTime').value;
+
+            if (startValue && endValue) {
+                currentTimeRange = {
+                    start: DateTime.fromISO(startValue).toJSDate(),
+                    end: DateTime.fromISO(endValue).toJSDate()
+                };
+                renderChart();
+            }
+        }
+
+        // Reset zoom
+        function resetZoom() {
+            if (chart) {
+                chart.dispatchAction({
+                    type: 'dataZoom',
+                    start: 0,
+                    end: 100
+                });
+            }
+        }
+
+        // Process events into timeline data
+        function processEventsForTimeline() {
+            // Filter events by time range, event types, and devices
+            filteredEvents = allEvents.filter(event => {
+                const eventTime = new Date(event.eventTimestamp || event.createdAt);
+                const timeMatch = !currentTimeRange.start ||
+                    (eventTime >= currentTimeRange.start && eventTime <= currentTimeRange.end);
+                const typeMatch = !event.errorCode || activeFilters.eventTypes.has(event.errorCode);
+                const deviceKey = `${event.modelId}_${event.deviceId}`;
+                const deviceMatch = activeFilters.devices.has(deviceKey);
+
+                return timeMatch && typeMatch && deviceMatch;
+            });
+
+            // Group events by device
+            const lanes = {};
+            filteredEvents.forEach(event => {
+                const laneKey = `${event.installationId}_${event.modelId}_${event.deviceId}`;
+                if (!lanes[laneKey]) {
+                    lanes[laneKey] = {
+                        name: `${event.modelId} (${event.deviceId})`,
+                        events: []
+                    };
+                }
+                lanes[laneKey].events.push(event);
+            });
+
+            // Convert to timeline format (spans)
+            const timelineData = [];
+            const categories = [];
+            let categoryIndex = 0;
+
+            Object.entries(lanes).forEach(([laneKey, lane]) => {
+                categories.push(lane.name);
+
+                // Sort events by time
+                const sortedEvents = lane.events.sort((a, b) => {
+                    const aTime = new Date(a.eventTimestamp || a.createdAt);
+                    const bTime = new Date(b.eventTimestamp || b.createdAt);
+                    return aTime - bTime;
+                });
+
+                // Create spans from active/inactive pairs
+                const activeStates = {};
+                sortedEvents.forEach(event => {
+                    const code = event.errorCode;
+                    if (!code) return;
+
+                    const eventTime = new Date(event.eventTimestamp || event.createdAt);
+
+                    if (event.active === true) {
+                        activeStates[code] = {
+                            startTime: eventTime,
+                            startEvent: event
+                        };
+                    } else if (event.active === false && activeStates[code]) {
+                        const span = activeStates[code];
+                        const duration = (eventTime - span.startTime) / 1000 / 60; // minutes
+
+                        timelineData.push({
+                            name: eventTypes[code]?.label || code,
+                            value: [
+                                categoryIndex,
+                                span.startTime.getTime(),
+                                eventTime.getTime(),
+                                duration
+                            ],
+                            itemStyle: {
+                                normal: {
+                                    color: eventTypes[code]?.color || '#64748b'
+                                }
+                            },
+                            code: code,
+                            description: eventTypes[code]?.description || code,
+                            icon: eventTypes[code]?.icon || '•'
+                        });
+
+                        delete activeStates[code];
+                    }
+                });
+
+                categoryIndex++;
+            });
+
+            return { data: timelineData, categories };
+        }
+
+        // Render chart
+        function renderChart() {
+            const { data, categories } = processEventsForTimeline();
+
+            if (!chart) {
+                chart = echarts.init(document.getElementById('timelineChart'), 'dark');
+            }
+
+            const option = {
+                backgroundColor: 'transparent',
+                tooltip: {
+                    trigger: 'item',
+                    formatter: function (params) {
+                        const { name, value, data } = params;
+                        const start = DateTime.fromMillis(value[1]).toFormat('dd.MM.yyyy HH:mm:ss');
+                        const end = DateTime.fromMillis(value[2]).toFormat('dd.MM.yyyy HH:mm:ss');
+                        const duration = formatDuration(value[3]);
+
+                        return `
+                            <div style="padding: 8px;">
+                                <div style="font-weight: bold; margin-bottom: 4px;">
+                                    ${data.icon} ${name}
+                                </div>
+                                <div style="font-size: 11px; color: #aaa; margin-bottom: 8px;">
+                                    ${data.description}
+                                </div>
+                                <div style="font-size: 12px;">
+                                    <strong>Start:</strong> ${start}<br>
+                                    <strong>Ende:</strong> ${end}<br>
+                                    <strong>Dauer:</strong> ${duration}
+                                </div>
+                            </div>
+                        `;
+                    }
+                },
+                title: {
+                    text: 'Event Timeline',
+                    left: 'center',
+                    textStyle: {
+                        color: '#e0e0e0',
+                        fontSize: 16,
+                        fontWeight: 'bold'
+                    }
+                },
+                dataZoom: [
+                    {
+                        type: 'slider',
+                        filterMode: 'weakFilter',
+                        showDataShadow: false,
+                        top: 50,
+                        height: 20,
+                        borderColor: 'transparent',
+                        backgroundColor: 'rgba(0,0,0,0.3)',
+                        handleIcon: 'path://M10.7,11.9H9.3c-4.9,0.3-8.8,4.4-8.8,9.4c0,5,3.9,9.1,8.8,9.4h1.3c4.9-0.3,8.8-4.4,8.8-9.4C19.5,16.3,15.6,12.2,10.7,11.9z',
+                        handleSize: '100%',
+                        handleStyle: {
+                            color: '#667eea'
+                        },
+                        textStyle: {
+                            color: '#e0e0e0'
+                        },
+                        labelFormatter: function(value) {
+                            return DateTime.fromMillis(value).toFormat('dd.MM HH:mm');
+                        }
+                    },
+                    {
+                        type: 'inside',
+                        filterMode: 'weakFilter'
+                    }
+                ],
+                grid: {
+                    left: 150,
+                    right: 50,
+                    top: 90,
+                    bottom: 80
+                },
+                xAxis: {
+                    type: 'time',
+                    axisLabel: {
+                        formatter: function(value) {
+                            return DateTime.fromMillis(value).toFormat('dd.MM\nHH:mm');
+                        },
+                        color: '#a0a0b0'
+                    },
+                    axisLine: {
+                        lineStyle: {
+                            color: 'rgba(255,255,255,0.2)'
+                        }
+                    },
+                    splitLine: {
+                        show: true,
+                        lineStyle: {
+                            color: 'rgba(255,255,255,0.1)',
+                            type: 'dashed'
+                        }
+                    }
+                },
+                yAxis: {
+                    type: 'category',
+                    data: categories,
+                    axisLabel: {
+                        color: '#e0e0e0',
+                        fontSize: 12
+                    },
+                    axisLine: {
+                        lineStyle: {
+                            color: 'rgba(255,255,255,0.2)'
+                        }
+                    }
+                },
+                series: [
+                    {
+                        type: 'custom',
+                        renderItem: renderGanttItem,
+                        encode: {
+                            x: [1, 2],
+                            y: 0
+                        },
+                        data: data
+                    }
+                ]
+            };
+
+            chart.setOption(option);
+            updateStats();
+
+            // Handle window resize
+            window.addEventListener('resize', () => {
+                chart.resize();
+            });
+        }
+
+        // Custom render function for Gantt bars
+        function renderGanttItem(params, api) {
+            const categoryIndex = api.value(0);
+            const start = api.coord([api.value(1), categoryIndex]);
+            const end = api.coord([api.value(2), categoryIndex]);
+            const height = api.size([0, 1])[1] * 0.6;
+
+            const rectShape = echarts.graphic.clipRectByRect(
+                {
+                    x: start[0],
+                    y: start[1] - height / 2,
+                    width: end[0] - start[0],
+                    height: height
+                },
+                {
+                    x: params.coordSys.x,
+                    y: params.coordSys.y,
+                    width: params.coordSys.width,
+                    height: params.coordSys.height
+                }
+            );
+
+            return (
+                rectShape && {
+                    type: 'rect',
+                    transition: ['shape'],
+                    shape: rectShape,
+                    style: api.style()
+                }
+            );
+        }
+
+        // Format duration
+        function formatDuration(minutes) {
+            if (minutes < 1) {
+                return `${Math.round(minutes * 60)}s`;
+            } else if (minutes < 60) {
+                return `${Math.round(minutes)}min`;
+            } else if (minutes < 1440) {
+                const hours = Math.floor(minutes / 60);
+                const mins = Math.round(minutes % 60);
+                return `${hours}h ${mins}min`;
+            } else {
+                const days = Math.floor(minutes / 1440);
+                const hours = Math.floor((minutes % 1440) / 60);
+                return `${days}d ${hours}h`;
+            }
+        }
+
+        // Update statistics
+        function updateStats() {
+            document.getElementById('totalEvents').textContent = allEvents.length;
+            document.getElementById('visibleEvents').textContent = filteredEvents.length;
+            document.getElementById('deviceCount').textContent = activeFilters.devices.size;
+
+            if (currentTimeRange.start && currentTimeRange.end) {
+                const duration = (currentTimeRange.end - currentTimeRange.start) / 1000 / 60 / 60; // hours
+                document.getElementById('timeSpan').textContent = duration < 24
+                    ? `${Math.round(duration)}h`
+                    : `${Math.round(duration / 24)}d`;
+            } else {
+                document.getElementById('timeSpan').textContent = '-';
+            }
+        }
+    </script>
+</body>
+</html>

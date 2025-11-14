@@ -81,6 +81,15 @@ func apiTestPageHandler(w http.ResponseWriter, r *http.Request) {
 	tmpl.Execute(w, nil)
 }
 
+func grafanaTimelinePageHandler(w http.ResponseWriter, r *http.Request) {
+	tmpl, err := template.ParseFS(templatesFS, "templates/grafana-timeline.html")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	tmpl.Execute(w, nil)
+}
+
 // ============================================================================
 // Auth Handlers (Legacy)
 // ============================================================================

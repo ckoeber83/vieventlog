@@ -107,6 +107,7 @@ func main() {
 	http.HandleFunc("/vitovent", vitoventPageHandler)
 	http.HandleFunc("/vitocharge", vitochargePageHandler)
 	http.HandleFunc("/apitest", apiTestPageHandler)
+	http.HandleFunc("/grafana-timeline", grafanaTimelinePageHandler)
 
 	// Static files handler
 	http.Handle("/static/", http.FileServer(http.FS(staticFS)))
