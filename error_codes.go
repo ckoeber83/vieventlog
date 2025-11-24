@@ -207,6 +207,13 @@ var alertCodes = map[string]string{
 	"A.17":  "Erhöhte Trinkwasserhygiene",
 	"A.19":  "Temperaturwächter hat ausgelöst",
 	"A.21":  "Hydraulischer Anlagendruck",
+	"A.25":  "Kommunikationsfehler",
+	"A.27":  "Batterie geringer Ladezustand",
+	"A.28":  "Kurzschluss Stellantrieb",
+	"A.29":  "Interne Absicherung defekt",
+	"A.30":  "Anlegetemperatursensor im Heizungsvorlauf fehlt",
+	"A.31":  "Abschaltung aufgrund zu hoher Vorlauftemperatur",
+	"A.32":  "Abschaltung aufgrund von Kondensationsgefahr",
 	"A.62":  "PWM-Signal Heizkreispumpe Heiz-/Kühlkreis 1",
 	"A.63":  "PWM-Signal Heizkreispumpe Heiz-/Kühlkreis 2",
 	"A.65":  "Heizkreispumpe Heiz-/Kühlkreis 2 läuft trocken",
@@ -380,6 +387,19 @@ var faultCodes = map[string]string{
 	"F.792":  "Ausfall Heizwasser-Durchlauferhitzer Phase 2",
 	"F.793":  "Ausfall Heizwasser-Durchlauferhitzer Phase 3",
 	"F.1078": "Wiederholt zu geringer Volumenstrom bei Verdichteranlauf",
+
+	// ViCare Smart Climate
+	"F.77":  "Datenspeicher inkonsistent",
+	"F.728":  "Defekter Temperatursensor",
+	"F.729":  "Hardware Fehler",
+	"F.730":  "Motorfehler",
+	"F.731":  "Heizkörper kühlt nicht aus",
+	"F.732":  "Batterie geringer Ladezustand",
+	"F.733":  "Defekter Anlegesensor Vorlauftemperatur",
+	"F.734":  "Defekter Anlegesensor Rücklauftemperatur",
+	"F.735":  "Kurzschluss Feuchtigkeitssensor",
+	"F.736":  "Defekter Temperatur-, Feuchtigkeits- oder CO2-Sensor",
+	"F.1310":  "Defekter CO2-Sensor Warnungsmeldungen",
 }
 
 func getErrorDescription(code string) string {
